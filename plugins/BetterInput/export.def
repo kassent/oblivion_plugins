@@ -1,0 +1,4 @@
+EXPORTS
+OBSEPlugin_Version
+OBSEPlugin_Preload
+OBSEPlugin_Load
