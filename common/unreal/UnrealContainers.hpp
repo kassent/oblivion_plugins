@@ -348,7 +348,7 @@ namespace UC
 	public:
 		inline std::string ToString() const
 		{
-			if (*this)
+			if (*this && NumElements > 1)
 			{
 				return UtfN::Utf16StringToUtf8String<std::string>(Data, NumElements  - 1); // Exclude null-terminator
 			}

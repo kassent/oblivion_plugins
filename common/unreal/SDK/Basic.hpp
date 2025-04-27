@@ -454,7 +454,7 @@ public:
 	}
 	std::string ToString() const
 	{
-		return TextData->TextSource.ToString();
+		return TextData ? TextData->TextSource.ToString() : "";
 	}
 };
 static_assert(alignof(FText) == 0x000008, "Wrong alignment on FText");

@@ -199,6 +199,7 @@ public:
 	uint8                                         Pad_349[0x7];                                      // 0x0349(0x0007)(Fixing Size After Last Property [ Dumper-7 ])
 	TArray<TWeakObjectPtr<class UCommonActivatableWidget>> VisibilityBoundWidgets;                   // 0x0350(0x0010)(ExportObject, ZeroConstructor, Transient, ContainsInstancedReference, UObjectWrapper, NativeAccessSpecifierPrivate)
 	uint8                                         Pad_360[0xA8];                                     // 0x0360(0x00A8)(Fixing Size After Last Property [ Dumper-7 ])
+	// 0x3C0
 	bool                                          bSetVisibilityOnActivated;                         // 0x0408(0x0001)(Edit, ZeroConstructor, IsPlainOldData, NoDestructor, Protected, HasGetValueTypeHash, NativeAccessSpecifierProtected)
 	ESlateVisibility                              ActivatedVisibility;                               // 0x0409(0x0001)(Edit, ZeroConstructor, IsPlainOldData, NoDestructor, Protected, HasGetValueTypeHash, NativeAccessSpecifierProtected)
 	bool                                          bSetVisibilityOnDeactivated;                       // 0x040A(0x0001)(Edit, ZeroConstructor, IsPlainOldData, NoDestructor, Protected, HasGetValueTypeHash, NativeAccessSpecifierProtected)

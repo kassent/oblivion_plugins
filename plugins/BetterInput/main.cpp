@@ -4,6 +4,7 @@
 #define NOMINMAX
 #include <Windows.h>
 #include <cstdint>
+#include <array>
 #include <LogUtils.h>
 #include <HookUtils.h>
 #include <BranchTrampoline.h>
@@ -23,7 +24,7 @@ std::uint32_t   g_runtimeVersion = 0;
 OBSEMessagingInterface* g_messaging = nullptr;
 
 
-namespace FKey {
+namespace EUnrealKey {
 enum EKey : int32_t {
     AnyKey,
     MouseX,
@@ -195,10 +196,19 @@ enum EKey : int32_t {
     Max = 163,
 };
 
-auto *g_keys = unrestricted_cast<std::array<SDK::FKey, EKey::Max>*>(0x91459A8_rel);
+
 }
 
+auto* g_keys = unrestricted_cast<std::array<SDK::FKey, EUnrealKey::Max>*>(0x91459A8_rel);
 
+using FnGetPersistentActor = SDK::ALevelScriptActor*(*)(SDK::UEngine*, int32_t);
+static auto GetPersistentActor = unrestricted_cast<FnGetPersistentActor>(0x37F0A20_rel);
+
+using FnGetWorldFromContextObject = SDK::UWorld*(*)(SDK::UEngine*, SDK::UObject*, int32_t);
+static auto GetWorldFromContextObject = unrestricted_cast<FnGetWorldFromContextObject>(0x37F28B0_rel);
+
+using FnGetAltarUISubSystem = SDK::UVAltarUISubsystem*(*)(SDK::UGameInstance*);
+static auto GetAltarUISubSystem = unrestricted_cast<FnGetAltarUISubSystem>(0x4743EB0_rel);
 
 
 void OBSEMessageHandler(OBSEMessagingInterface::Message* msg) {
@@ -211,135 +221,455 @@ void OBSEMessageHandler(OBSEMessagingInterface::Message* msg) {
 // 0147B4F4F0 UAltarGraphicsSettingsDebugInfo_VFT
 // void Tick(FGeometry MyGeometry, float InDeltaTime)
 
+namespace {
+
+    void DumpObject(auto* a_object) {
+        auto objectName = a_object->GetName();
+        _MESSAGE("------------------ object: %s, addr: %p", objectName.c_str(), a_object);
+        // auto *instanceClass = a_object->Class;
+        // if (instanceClass) {
+        //     for(const SDK::UStruct* Clss = instanceClass; Clss; Clss = Clss->Super)
+        //     {
+        //         auto className = Clss->GetName();
+        //         _MESSAGE("============== className: %s", className.c_str());     
+        //         for (SDK::UField* Field = Clss->Children; Field; Field = Field->Next)
+        //         {
+        //             auto fieldName = Field->GetName();
+        //             if(Field->HasTypeFlag(SDK::EClassCastFlags::Function)) {
+        //                 auto fieldName = Field->GetName();
+        //                 auto *func = static_cast<class SDK::UFunction*>(Field);
+        //                 _MESSAGE("funcName: %s, addr: %p", fieldName.c_str(), to_rel_addr(func->ExecFunction));
+        //             }
+        //         }
+        //     }
+        // }
+    }
+
+    void DumpContainerWidget(auto* a_containerWidget) {
+        auto widgetName = a_containerWidget->GetName();
+        _MESSAGE("------------------ containerWidget: %s, addr: %p", widgetName.c_str(), a_containerWidget);
+        bool isTakeFocused = a_containerWidget->IsTakeFocused;
+        _MESSAGE("isTakeFocused: %d", isTakeFocused);
+
+        bool isInPreviewMode = a_containerWidget->IsInPreviewMode;
+        _MESSAGE("isInPreviewMode: %d", isInPreviewMode);
+
+        bool isKeyboardInputMode = a_containerWidget->IsKeyboardInputMode;
+        _MESSAGE("isKeyboardInputMode: %d", isKeyboardInputMode);
+
+        bool isContainerOpening = a_containerWidget->IsContainerOpening;
+        _MESSAGE("isContainerOpening: %d", isContainerOpening);
+
+        bool isContainerClosing = a_containerWidget->IsContainerClosing;
+        _MESSAGE("isContainerClosing: %d", isContainerClosing);
+
+        bool isCloseRequested = a_containerWidget->IsCloseRequested;
+        _MESSAGE("isCloseRequested: %d", isCloseRequested);
+
+
+        SDK::UInputMappingContext* inputMappingContext = a_containerWidget->InputMapping;
+        _MESSAGE("inputMappingContext: %s", inputMappingContext ? inputMappingContext->GetName().c_str() : "nullptr");
+        if (inputMappingContext) {
+            _MESSAGE("inputMappingContext: %s", inputMappingContext->GetName().c_str());
+            const auto& mappings = inputMappingContext->Mappings;
+            for (const auto& mapping : mappings) {
+                _MESSAGE("mapping: %s", mapping.Action->GetName().c_str());
+                auto actionDescription = mapping.Action->ActionDescription.ToString();
+                _MESSAGE("actionDescription: %s", actionDescription.c_str());
+
+                auto keyName = mapping.Key.KeyName.ToString();
+                _MESSAGE("keyName: %s", keyName.c_str());
+                // auto actionTriggers = mapping.Action->Triggers;
+                // for (const auto &trigger : actionTriggers) {
+                //     _MESSAGE("trigger: %s", trigger->GetName().c_str());
+                // }
+                // auto actionModifiers = mapping.Action->Modifiers;
+                // for (const auto &modifier : actionModifiers) {
+                //     _MESSAGE("modifier: %s", modifier->GetName().c_str());
+                // }
+                /*
+                .text:000000014492E83E                 lea     rcx, [rdi+1C8h]
+.text:000000014492E845                 lea     rdx, aUndefined_2 ; "Undefined"
+.text:000000014492E84C                 call    sub_140DE4F20
+
+FString::Fstring(const char*)
+
+
+
+            sub_140DE4F20((__int64)v40, (const __m128i *)L")");
+            sub_140DE4F20((__int64)v39, (const __m128i *)" (CL_Main: ");
+                */
+            }
+            auto contextDescription = inputMappingContext->ContextDescription.ToString();
+            _MESSAGE("contextDescription: %s", contextDescription.c_str());
+        }
+
+
+        // CurrentHoveredItem
+        auto *currentHoveredItem = a_containerWidget->CurrentHoveredItem;
+        if (currentHoveredItem) {
+            _MESSAGE("currentHoveredItem: %d", currentHoveredItem->GetInventoryIndex());
+        }
+
+        SDK::UVContainerMenuViewModel *viewModel = a_containerWidget->VContainerMenuViewModel;
+        if (!viewModel) {
+            _MESSAGE("viewModel is nullptr");
+            return;
+        }
+        _MESSAGE("viewModel: %s, %p", viewModel->GetName().c_str(), viewModel);
+        const auto& playerData = viewModel->ExtraData;
+        auto playerName = playerData.PlayerName.ToString();
+        _MESSAGE("playerName: %s", playerName.c_str());
+        _MESSAGE("gold: %d", playerData.GoldAmount);
+
+        const auto &buttonData = viewModel->ButtonData;
+        _MESSAGE("IsTakeAll: %d", buttonData.IsTakeAll);
+
+        _MESSAGE("IsNegotiate: %d", buttonData.IsNegotiate);
+        // MenuType
+        _MESSAGE("MenuType: %d", viewModel->MenuType);
+
+        // IsContainerMenu
+        _MESSAGE("CurrentTab: %d", viewModel->CurrentTab);
+
+        // IsDialogueMenu
+        _MESSAGE("CurrentPageContainer: %d", viewModel->CurrentPageContainer);
+
+        // SortTypeContainer
+        _MESSAGE("SortTypeContainer: %d", viewModel->SortTypeContainer);
+
+        // bIsSimpleContainer
+        _MESSAGE("bIsSimpleContainer: %d", viewModel->bIsSimpleContainer);
+
+        // CurrentPageInventory
+        _MESSAGE("CurrentPageInventory: %d", viewModel->CurrentPageInventory);
+
+        // bIsListViewHovered
+        _MESSAGE("bIsListViewHovered: %d", viewModel->bIsListViewHovered);
+
+        // bBlockBackAction
+        _MESSAGE("bBlockBackAction: %d", viewModel->bBlockBackAction);
+    }
+
+    void ProcessMessageWidget(auto* playerController, auto* a_messageWidget) {
+        if (!a_messageWidget->GetIsFocussed()) {
+            return;
+        }
+        const auto &aKey = g_keys->at(EUnrealKey::A);
+        const auto &dKey = g_keys->at(EUnrealKey::D);
+        const auto &eKey = g_keys->at(EUnrealKey::E);
+        const auto &spaceKey = g_keys->at(EUnrealKey::SpaceBar);
+        const auto &tabKey = g_keys->at(EUnrealKey::Tab);
+
+        bool isAKeyPressed = playerController->WasInputKeyJustPressed(aKey);
+        bool isDKeyPressed = playerController->WasInputKeyJustPressed(dKey);
+        bool isEKeyPressed = playerController->WasInputKeyJustPressed(eKey);
+        bool isSpaceKeyPressed = playerController->WasInputKeyJustPressed(spaceKey);
+        bool isTabKeyPressed = playerController->WasInputKeyJustPressed(tabKey);
+
+        if (!isAKeyPressed && !isDKeyPressed && !isEKeyPressed && !isSpaceKeyPressed && !isTabKeyPressed) {
+            return;
+        }
+        // WBP_MessageMenuSpecific_Default
+        auto *defaultWidget = a_messageWidget->WBP_MessageMenuSpecific_Default;
+        if (!defaultWidget) {
+            _MESSAGE("defaultWidget is nullptr");
+            return;
+        }
+        auto buttonNum = defaultWidget->Buttons.Num();
+        _MESSAGE("buttonNum: %d", buttonNum);
+
+        const auto& buttons = defaultWidget->Buttons;
+        for (const auto& button : buttons) {
+            _MESSAGE("button: %s", button->GetName().c_str());
+        }
+
+
+        auto *widgetSwitcher = a_messageWidget->WidgetSwitcher;
+        if (!widgetSwitcher) {
+            _MESSAGE("widgetSwitcher is nullptr");
+            return;
+        }
+
+        auto maxIndex = widgetSwitcher->GetNumWidgets() - 1;
+        _MESSAGE("maxIndex: %d", maxIndex);
+
+        auto currentIndex = widgetSwitcher->GetActiveWidgetIndex();
+        _MESSAGE("currentIndex: %d", currentIndex);
+
+        if (isAKeyPressed && currentIndex > 0) {
+            currentIndex -= 1;
+            widgetSwitcher->SetActiveWidgetIndex(currentIndex);
+            return;
+        }
+        if (isDKeyPressed && currentIndex < maxIndex) {
+            currentIndex += 1;
+            widgetSwitcher->SetActiveWidgetIndex(currentIndex);
+            return;
+        }
+        if (isEKeyPressed || isSpaceKeyPressed || isTabKeyPressed) {
+            a_messageWidget->SendClickedButton(currentIndex);
+            return;
+        }  
+    }
+
+    void ProcessContainerWidget(auto* playerController, auto* a_containerWidget) {
+        if (!a_containerWidget->GetIsFocussed()) {
+            return;
+        }
+        const auto &tabKey = g_keys->at(EUnrealKey::Tab);
+        auto isTabKeyPressed = playerController->WasInputKeyJustPressed(tabKey);
+
+        const auto &spaceKey = g_keys->at(EUnrealKey::SpaceBar);
+        // const auto &eKey = g_keys->at(EUnrealKey::E);
+        auto isSpaceKeyPressed = playerController->WasInputKeyJustPressed(spaceKey);
+        if (isTabKeyPressed) {
+            _MESSAGE("isTabKeyPressed");
+        }
+
+        if (!isSpaceKeyPressed && !isTabKeyPressed) {
+            return;
+        }
+        SDK::UVContainerMenuViewModel *viewModel = a_containerWidget->VContainerMenuViewModel;
+        if (!viewModel) {
+            _MESSAGE("viewModel is nullptr");
+            return;
+        }
+        DumpContainerWidget(a_containerWidget); 
+
+        if (isTabKeyPressed && !viewModel->bBlockBackAction 
+            && !a_containerWidget->IsContainerClosing 
+            && !a_containerWidget->IsCloseRequested
+            && !a_containerWidget->IsContainerOpening
+            ) {
+            viewModel->RegisterSendButtonExitHandler();
+            return;
+        }
+
+        if (isSpaceKeyPressed && !viewModel->bBlockBackAction) {
+            int32_t currentHoveredItemIndex = -1;
+            auto *currentHoveredItem = a_containerWidget->CurrentHoveredItem;
+            if (currentHoveredItem) {
+                currentHoveredItemIndex = currentHoveredItem->GetInventoryIndex();
+            }
+            const auto &buttonData = viewModel->ButtonData;
+            auto menuType = viewModel->MenuType;
+            if (currentHoveredItemIndex != -1) {
+                viewModel->RegisterSendClickOnItemHandler(currentHoveredItemIndex);
+            }
+            return;
+        }
+    }
+
+    void ProcessDialogueWidget(auto* playerController, auto* a_dialogueWidget) {
+        if (!a_dialogueWidget->GetIsFocussed()) {
+            return;
+        }
+        const auto &tabKey = g_keys->at(EUnrealKey::Tab);
+        auto isTabKeyPressed = playerController->WasInputKeyJustPressed(tabKey);
+
+        const auto &spaceKey = g_keys->at(EUnrealKey::SpaceBar);
+        const auto &eKey = g_keys->at(EUnrealKey::E);
+        auto isSpaceKeyPressed = playerController->WasInputKeyJustPressed(spaceKey) || playerController->WasInputKeyJustPressed(eKey);
+
+        if (!isSpaceKeyPressed && !isTabKeyPressed) {
+            return;
+        }
+        SDK::UInputMappingContext *inputMappingContext = a_dialogueWidget->InputMapping;
+        _MESSAGE("inputMappingContext: %s", inputMappingContext ? inputMappingContext->GetName().c_str() : "nullptr");
+        if (inputMappingContext) {
+            _MESSAGE("inputMappingContext: %s", inputMappingContext->GetName().c_str());
+            const auto &mappings = inputMappingContext->Mappings;
+            for (const auto &mapping : mappings) {
+                _MESSAGE("mapping: %s", mapping.Action->GetName().c_str());
+                auto actionDescription = mapping.Action->ActionDescription.ToString();
+                _MESSAGE("actionDescription: %s", actionDescription.c_str());
+
+                auto keyName = mapping.Key.KeyName.ToString();
+                _MESSAGE("keyName: %s", keyName.c_str());
+                // auto actionTriggers = mapping.Action->Triggers;
+                // for (const auto &trigger : actionTriggers) {
+                //     _MESSAGE("trigger: %s", trigger->GetName().c_str());
+                // }
+                // auto actionModifiers = mapping.Action->Modifiers;
+                // for (const auto &modifier : actionModifiers) {
+                //     _MESSAGE("modifier: %s", modifier->GetName().c_str());
+                // }
+            }
+            auto contextDescription = inputMappingContext->ContextDescription.ToString();
+            _MESSAGE("contextDescription: %s", contextDescription.c_str());
+        }
+        
+
+        auto *viewModel = a_dialogueWidget->VDialogueMenuViewModel;
+        if (!viewModel) {
+            _MESSAGE("viewModel is nullptr");
+            return;
+        }
+        DumpObject(a_dialogueWidget);
+
+        const SDK::FLegacyDialogMenuButtonVisibility &buttonVisibility = viewModel->ButtonsVisibility;
+        _MESSAGE("bPersuasion: %d", buttonVisibility.bPersuasion);
+        _MESSAGE("bBarter: %d", buttonVisibility.bBarter);
+        _MESSAGE("bSpellBarter: %d", buttonVisibility.bSpellBarter);
+        _MESSAGE("bRepairing: %d", buttonVisibility.bRepairing);
+        _MESSAGE("bTraining: %d", buttonVisibility.bTraining);
+        _MESSAGE("bRecharging: %d", buttonVisibility.bRecharging);
+        _MESSAGE("bGoodbye: %d", buttonVisibility.bGoodbye);
+        _MESSAGE("Pad_F: %d", buttonVisibility.Pad_F[0]);
+
+        if (isTabKeyPressed && buttonVisibility.bGoodbye) {
+            if (!viewModel->bSubtitleVisibility) {
+                viewModel->RegisterSendClickedCloseIcon();
+            } else {
+                viewModel->RegisterSendClickedSkip();
+            }
+            return;
+        }
+
+        auto *dialogScrollBox = a_dialogueWidget->dialog_scrollbox;
+        if (dialogScrollBox) {
+            _MESSAGE("dialogScrollBox: %s", dialogScrollBox->GetName().c_str());
+            auto index = dialogScrollBox->GetFocusElementIndex();
+            _MESSAGE("selected index: %d", index);
+            if (!viewModel->bSubtitleVisibility) {
+                viewModel->RegisterSendClickedResponse(index);
+            } else {
+                viewModel->RegisterSendClickedSkip();
+            }
+        }
+    }
+}
+
 class UAltarGraphicsSettingsDebugInfoWrapper {
     public:
         using FnProcessEvent = void(*)(SDK::UAltarGraphicsSettingsDebugInfo*, SDK::UFunction*, void*);
         static FnProcessEvent ProcessEventVanilla;
         static void ProcessEvent(SDK::UAltarGraphicsSettingsDebugInfo* a_self, SDK::UFunction* a_functor, void* a_params) {
             if (a_functor->GetName() == "Tick") {
-                /*
-    SDK::UEngine* Engine = SDK::UEngine::GetEngine();
-    SDK::UWorld* World = SDK::UWorld::GetWorld();
+                do {
 
-    SDK::APlayerController* MyController = World->OwningGameInstance->LocalPlayers[0]->PlayerController;
+                    static auto* ueEngine = SDK::UEngine::GetEngine();
+                    if (!ueEngine) {
+                        _MESSAGE("ueEngine is nullptr");
+                        break;
+                    }
 
-    // Print the full-name of an object ("ClassName PackageName.OptionalOuter.ObjectName") 
-    std::cout << Engine->ConsoleClass->GetFullName() << std::endl;
-                */
+                    //  L_PersistentDungeon
+                    static auto* persistentActor = GetPersistentActor(ueEngine, 0);
+                    if (!persistentActor) {
+                        _MESSAGE("persistentActor is nullptr");
+                        break;
+                    }
 
-                auto* ueEngine = SDK::UEngine::GetEngine();
-                auto GetPersistentActor = unrestricted_cast<SDK::ALevelScriptActor*(*)(SDK::UEngine*, int32_t)>(0x37F0A20_rel);
-                //  L_PersistentDungeon
-                auto* persistentActor = GetPersistentActor(ueEngine, 0);
-                auto persistentActorName = persistentActor->GetName();
-                _MESSAGE("persistentActorName: %s", persistentActorName.c_str());
-                auto GetWorldFromContextObject = unrestricted_cast<SDK::UWorld*(*)(SDK::UEngine*, SDK::UObject*, int32_t)>(0x37F28B0_rel);
-                auto* World = GetWorldFromContextObject(ueEngine, persistentActor, 1);
-                auto* GameInstance = World->OwningGameInstance;
-                _MESSAGE("Engine: %p, World: %p, GameInstance: %p", ueEngine, World, GameInstance);
+                    static auto* World = GetWorldFromContextObject(ueEngine, persistentActor, 1);
+                    if (!World) {
+                        _MESSAGE("World is nullptr");
+                        break;
+                    }
 
-                if (GameInstance) {
-                    // v18 = RealGetAltarUISubSystem_144743EB0(UGameInstance_1431B5030);
-                    auto GetAltarUISubSystem = unrestricted_cast<SDK::UVAltarUISubsystem*(*)(SDK::UGameInstance*)>(0x4743EB0_rel);
-                    auto* altarUISubsystem = GetAltarUISubSystem(GameInstance);
-                    if (altarUISubsystem) {
-                        _MESSAGE("altarUISubsystem: %s", altarUISubsystem->GetName().c_str());
-                        // auto* instanceClass = altarUISubsystem->Class;
-                        // if (instanceClass) {
-                        //     for (const SDK::UStruct* Clss = instanceClass; Clss; Clss = Clss->Super)
-                        //     {
-                        //         auto className = Clss->GetName();
-                        //         _MESSAGE("============== className: %s", className.c_str());
-                        //         //if (className != "UAltarUISubsystem")
-                        //         //    continue;
+                    static auto* gameInstance = World->OwningGameInstance;
+                    if (!gameInstance) {
+                        _MESSAGE("gameInstance is nullptr");
+                        break;
+                    }
 
-                        //         for (SDK::UField* Field = Clss->Children; Field; Field = Field->Next)
-                        //         {
-                        //             auto fieldName = Field->GetName();
-                        //             if (Field->HasTypeFlag(SDK::EClassCastFlags::Function)) {
-                        //                 auto fieldName = Field->GetName();
-                        //                 auto* func = static_cast<class SDK::UFunction*>(Field);
-                        //                 _MESSAGE("funcName: %s, addr: %p", fieldName.c_str(), to_rel_addr(func->ExecFunction));
-                        //             }
-                        //         }
-                        //     }
-                        // }
-                        // VAltarUISubsystem
-                        auto isMenuVisible = altarUISubsystem->IsMenuVisible();
-                        auto isHudVisible = altarUISubsystem->IsHUDVisible();
-                        const auto &widgets = altarUISubsystem->WidgetsMap;
-                        for (const auto &widget : widgets) {
-                            auto widgetName = widget.Value()->GetName();
-                            if (widgetName.starts_with("WBP_ModernMenu_Dialog_C")) {
-                                _MESSAGE("widget: %s", widgetName.c_str());
+                    static auto* altarUISubsystem = GetAltarUISubSystem(gameInstance);
+                    if (!altarUISubsystem) {
+                        _MESSAGE("altarUISubsystem is nullptr");
+                        break;
+                    }
 
-                            }
+                    static auto* playerController = SDK::UGameplayStatics::GetPlayerController(persistentActor, 0);
+                    if (!playerController) {
+                        _MESSAGE("playerController is nullptr");
+                        break;
+                    }
 
-                            // WBP_ModernMenu_Dialog_C_2147475584 
-                            // WBP_ModernMenu_Container_C_2147476754 
-                            // WBP_ModernMenu_Player_C_2147481113 
-                            // WBP_AltarHud_Fade_C_2147479908 
-                            _MESSAGE("widget: %s", widget.Value()->GetName().c_str());
+                    // const auto &rightMouseButton = g_keys->at(EUnrealKey::RightMouseButton);
+                    // // _MESSAGE("spaceKey: %s", spaceKey.KeyName.ToString().c_str());
+
+                    // auto isRightMouseButtonPressed = playerController->WasInputKeyJustPressed(rightMouseButton);
+
+
+                    //            // WBP_ModernMenu_Dialog_C_2147475584 
+                    //            // WBP_ModernMenu_Container_C_2147476754 
+                    //            // WBP_ModernMenu_Player_C_2147481113 
+                    //            // WBP_AltarHud_Fade_C_2147479908 
+                    //            // WBP_ModernMenu_Message_C_2147480238, isFocused: 1 
+                    const auto &widgets = altarUISubsystem->WidgetsMap;
+                    // for (const auto &pair : widgets) {
+                    //     auto *widget = pair.Value();
+                    //     if (!widget) {
+                    //         _MESSAGE("widget is nullptr");
+                    //         continue;
+                    //     }
+                    //     auto widgetName = widget->GetName();
+                    //     auto isFocused = widget->GetIsFocussed();
+                    //     // _MESSAGE("widget: %s, isFocused: %d", widgetName.c_str(), isFocused);
+                    //     if (isFocused && widgetName.starts_with("WBP_ModernMenu_Message_C")) {
+                    //         // _MESSAGE("widget: %s, isFocused: %d", widgetName.c_str(), isFocused);
+                    //         auto *messageWidget = static_cast<SDK::UWBP_ModernMenu_Message_C*>(widget);
+                    //         ProcessMessageWidget(playerController, messageWidget);
+                    //         break;
+                    //     }
+                    // }
+
+                    for (const auto &pair : widgets) {
+                        auto *widget = pair.Value();
+                        if (!widget) {
+                            _MESSAGE("widget is nullptr");
+                            continue;
                         }
-                        _MESSAGE("isMenuVisible: %d, isHudVisible: %d", isMenuVisible, isHudVisible);
-                    }
-
-                    auto* playerController = SDK::UGameplayStatics::GetPlayerController(persistentActor, 0);
-                    if (playerController) {
-                        _MESSAGE("direct playerController: %s. %p", playerController->GetName().c_str(), playerController);
-                    }
-
-                    const auto &localPlayers = GameInstance->LocalPlayers;
-                    if (localPlayers.Num() > 0) {
-                        auto* LocalPlayer = localPlayers[0];
-                        if (LocalPlayer) {
-                            auto* PlayerController = LocalPlayer->PlayerController;
-                            if (PlayerController) {
-                                _MESSAGE("PlayerController: %s, %p", PlayerController->GetName().c_str(), PlayerController);
-                            }
+                        auto widgetName = widget->GetName();
+                        auto isFocused = widget->GetIsFocussed();
+                        // _MESSAGE("widget: %s, isFocused: %d", widgetName.c_str(), isFocused);
+                        if (isFocused && widgetName.starts_with("WBP_ModernMenu_Dialog_C")) {
+                            // _MESSAGE("widget: %s, isFocused: %d", widgetName.c_str(), isFocused);
+                            auto *dialogueWidget = static_cast<SDK::UWBP_ModernMenu_Dialog_C*>(widget);
+                            ProcessDialogueWidget(playerController, dialogueWidget);
+                            break;
+                        }
+                        if (isFocused && widgetName.starts_with("WBP_ModernMenu_Container_C")) {
+                            auto *containerWidget = static_cast<SDK::UWBP_ModernMenu_Container_C*>(widget);
+                            ProcessContainerWidget(playerController, containerWidget);
+                            break;
                         }
                     }
-                }
 
-                // _MESSAGE("Engine: %llx, World: %llx", Engine, World); 
 
-                // _MESSAGE("Tick");
-                // static auto GetAltarUISubsystem = unrestricted_cast<SDK::UVAltarUISubsystem*(*)()>(0x4640850_rel);
-                // _MESSAGE("GetAltarUISubsystem: %llx", to_rel_addr(GetAltarUISubsystem));
-                // auto* altarUISubsystem = GetAltarUISubsystem();
-                // _MESSAGE("altarUISubsystem: %llx, name: %s", altarUISubsystem, altarUISubsystem->GetName().c_str());
-                // if (altarUISubsystem) {
-                //     _MESSAGE("altarUISubsystem is not null");
-                //     auto *instanceClass = altarUISubsystem->Class;
-                //     if (instanceClass) {
-                //         for(const SDK::UStruct* Clss = instanceClass; Clss; Clss = Clss->Super)
-                //         {
-                //             auto className = Clss->GetName();
-                //             _MESSAGE("============= className: %s", className.c_str());
-                //             //if (className != "UAltarUISubsystem")
-                //             //    continue;
-                                
-                //             for (SDK::UField* Field = Clss->Children; Field; Field = Field->Next)
-                //             {
-                //                 auto fieldName = Field->GetName();
-                //                 if(Field->HasTypeFlag(SDK::EClassCastFlags::Function)) {
-                //                     auto fieldName = Field->GetName();
-                //                     _MESSAGE("funcName: %s", fieldName.c_str());
-                //                 }
-                //             }
-                //         }
-                //     }
-                //     // auto isMenuVisible = altarUISubsystem->IsMenuVisible();
-                //     // _MESSAGE("isMenuVisible: %d", isMenuVisible);
-                //     // if (isMenuVisible) {
-                //     //     _MESSAGE("Menu is visible");
-                //     // }
 
-                //     // auto isHudVisible = altarUISubsystem->IsHUDVisible();
-                //     // if (isHudVisible) {
-                //     //     _MESSAGE("HUD is visible");
-                //     // }
-                // }
+
+
+                    //if (gameInstance) {
+                    //    auto* altarUISubsystem = GetAltarUISubSystem(gameInstance);
+                    //    if (altarUISubsystem) {
+                    //        auto isMenuVisible = altarUISubsystem->IsMenuVisible();
+                    //        auto isHudVisible = altarUISubsystem->IsHUDVisible();
+                    //        const auto &widgets = altarUISubsystem->WidgetsMap;
+                    //        for (const auto &widget : widgets) {
+                    //            auto widgetName = widget.Value()->GetName();
+                    //            if (widgetName.starts_with("WBP_ModernMenu_Dialog_C")) {
+                    //                _MESSAGE("widget: %s", widgetName.c_str());
+                    //            }
+
+                    //            // WBP_ModernMenu_Dialog_C_2147475584 
+                    //            // WBP_ModernMenu_Container_C_2147476754 
+                    //            // WBP_ModernMenu_Player_C_2147481113 
+                    //            // WBP_AltarHud_Fade_C_2147479908 
+                    //            // WBP_ModernMenu_Message_C_2147480238, isFocused: 1 
+                    //            _MESSAGE("widget: %s", widget.Value()->GetName().c_str());
+                    //        }
+                    //        _MESSAGE("isMenuVisible: %d, isHudVisible: %d", isMenuVisible, isHudVisible);
+                    //    }
+
+                    //    
+                    //    if (playerController) {
+                    //        _MESSAGE("direct playerController: %s. %p", playerController->GetName().c_str(), playerController);
+                    //    }
+                    //}
+                } while (false);
+               
             }
             ProcessEventVanilla(a_self, a_functor, a_params);
         }
@@ -433,7 +763,7 @@ extern "C"
 			_MESSAGE("registering listener for OBSE...");
 			g_messaging->RegisterListener(g_pluginHandle, "OBSE", OBSEMessageHandler);
 		}
-		UObjectWrapper::InstallHooks();
+		// UObjectWrapper::InstallHooks();
 		UAltarGraphicsSettingsDebugInfoWrapper::InstallHooks();
 		return true;
 	}
