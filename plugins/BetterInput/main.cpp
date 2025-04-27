@@ -274,8 +274,8 @@ namespace {
             const auto& mappings = inputMappingContext->Mappings;
             for (const auto& mapping : mappings) {
                 _MESSAGE("mapping: %s", mapping.Action->GetName().c_str());
-                auto actionDescription = mapping.Action->ActionDescription.ToString();
-                _MESSAGE("actionDescription: %s", actionDescription.c_str());
+                //auto actionDescription = mapping.Action->ActionDescription.ToString();
+                //_MESSAGE("actionDescription: %s", actionDescription.c_str());
 
                 auto keyName = mapping.Key.KeyName.ToString();
                 _MESSAGE("keyName: %s", keyName.c_str());
